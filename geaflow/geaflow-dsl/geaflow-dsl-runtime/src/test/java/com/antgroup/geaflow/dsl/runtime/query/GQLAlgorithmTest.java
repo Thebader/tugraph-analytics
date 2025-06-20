@@ -32,6 +32,15 @@ public class GQLAlgorithmTest {
     private final String TEST_GRAPH_PATH = "/tmp/geaflow/dsl/algorithm/test/graph";
 
     @Test
+    public void testAlgorithm_circleDetect() throws Exception{
+        QueryTester
+                    .build()
+                    .withGraphDefine("/query/ddl.sql")
+                    .withQueryPath("/test.sql")
+                    .execute()
+                    .checkSinkResult();
+    }
+    @Test
     public void testAlgorithm_001() throws Exception {
         QueryTester
             .build()

@@ -4,7 +4,6 @@ import java.util.HashSet;
 import java.util.Iterator;
 import java.util.Objects;
 import java.util.Set;
-
 import com.antgroup.geaflow.common.tuple.Tuple;
 import com.antgroup.geaflow.common.type.primitive.LongType;
 import com.antgroup.geaflow.dsl.common.algo.AlgorithmRuntimeContext;
@@ -21,82 +20,101 @@ import com.antgroup.geaflow.dsl.common.util.TypeCastUtil;
 import com.antgroup.geaflow.model.graph.edge.EdgeDirection;
 import java.util.Optional;
 
-@Description(name = "single_vertex_circles_detection", description = "detect self-loop or circle for each vertex by message passing")
+// 算法描述：检测单个顶点参与的自环或环（通过消息传递）
+@Description(name = "single_vertex_circles_detection", 
+             description = "detect self-loop or circle for each vertex by message passing")
 public class SingleVertexCirclesDetection implements AlgorithmUserFunction<Long, Tuple<Long, Integer>> {
-    private AlgorithmRuntimeContext<Long, Tuple<Long, Integer>> context;
-    // 最大深度
-    private static final int MAX_DEPTH = 10; 
-    //保存环路上的点 用于最终输出
-    private Set<Long> verticesInCircle = new HashSet<>(); 
-    private Set<Tuple<Long, Integer>> circleResults = new HashSet<>();
+    
+    private AlgorithmRuntimeContext<Long, Tuple<Long, Integer>> context; // 算法运行时上下文
+    
+    // 常量配置
+    private static final int MAX_DEPTH = 10;  // 最大搜索深度（防止无限循环）
+    
+    // 状态记录
+    private Set<Long> verticesInCircle = new HashSet<>();      // 记录在环中的顶点ID
+    private Set<Tuple<Long, Integer>> circleResults = new HashSet<>(); // 记录环检测结果（顶点ID，环长度）
 
+    // 初始化方法（由框架调用）
     @Override
-    public void init(AlgorithmRuntimeContext<Long, Tuple<Long, Integer>> context, 
-Object[] params) {
-        this.context = context;
+    public void init(AlgorithmRuntimeContext<Long, Tuple<Long, Integer>> context, Object[] params) {
+        this.context = context;  // 保存运行时上下文
     }
 
+    // 顶点计算逻辑（每个迭代调用）
     @Override
     public void process(RowVertex vertex, Optional<Row> updatedValues, Iterator<Tuple<Long, Integer>> messages) {
-        Long selfId = (Long) TypeCastUtil.cast(vertex.getId(), Long.class);
-        long iteration = context.getCurrentIterationId();
-        if (iteration == 1L) {
+        Long selfId = (Long) TypeCastUtil.cast(vertex.getId(), Long.class);  // 获取当前顶点ID
+        long iteration = context.getCurrentIterationId();  // 获取当前迭代轮次
 
-            // 首轮需要每个顶点向所有出边邻居发送Tuple
+        // 第一轮迭代：初始化消息发送
+        if (iteration == 1L) {
+            // 创建初始消息：(起始顶点ID, 当前路径长度=1)
             Tuple<Long, Integer> msg = Tuple.of(selfId, 1);
+            
+            // 遍历所有出边，向邻居发送消息
             for (RowEdge edge : context.loadEdges(EdgeDirection.OUT)) {
-                Long targetId = (Long) TypeCastUtil.cast(edge.getTargetId(), 
-Long.class);
-                context.sendMessage(targetId, msg);
+                Long targetId = (Long) TypeCastUtil.cast(edge.getTargetId(), Long.class);
+                context.sendMessage(targetId, msg);  // 发送消息到目标顶点
             }
-        } else {
-            // 之后的轮次
-            // 判断是否成环，否则继续转发
+        } 
+        // 后续迭代：处理接收到的消息
+        else {
             while (messages.hasNext()) {
                 Tuple<Long, Integer> msg = messages.next();
-                Long startId = msg.getF0();
-                int pathLen = msg.getF1();
+                Long startId = msg.getF0();   // 消息中的起始顶点ID
+                int pathLen = msg.getF1();    // 当前路径长度
+                
+                // 检测到环：当前顶点是环的起点
                 if (Objects.equals(selfId, startId)) {
-                    // 检测到环路，记录该顶点ID和环的长度到结果变量中
-                    verticesInCircle.add(selfId);
-                    circleResults.add(Tuple.of(selfId, pathLen));
-                    continue;
+                    verticesInCircle.add(selfId);          // 标记当前顶点在环中
+                    circleResults.add(Tuple.of(selfId, pathLen)); // 记录环信息(顶点ID, 环长度)
+                    continue;  // 不再转发此消息
                 }
+                
+                // 深度超过阈值：停止传播
                 if (pathLen >= MAX_DEPTH) continue;
+                
+                // 创建新消息：路径长度+1
                 Tuple<Long, Integer> newMsg = Tuple.of(startId, pathLen + 1);
+                
+                // 转发消息给所有出边邻居
                 for (RowEdge edge : context.loadEdges(EdgeDirection.OUT)) {
-                    Long targetId = (Long) TypeCastUtil.cast(edge.getTargetId(), 
-Long.class);
+                    Long targetId = (Long) TypeCastUtil.cast(edge.getTargetId(), Long.class);
                     context.sendMessage(targetId, newMsg);
                 }
             }
         }
     }
 
+    // 算法收尾处理（所有迭代结束后调用）
     @Override
     public void finish(RowVertex vertex, Optional<Row> updatedValues) {
         Long vertexId = (Long) TypeCastUtil.cast(vertex.getId(), Long.class);
-        // 只输出在环中的顶点
+        
+        // 只处理在环中的顶点
         if (verticesInCircle.contains(vertexId)) {
-            // 找到该顶点参与的最小的环
             int minCircleLength = Integer.MAX_VALUE;
+            
+            // 查找该顶点参与的最小环长度
             for (Tuple<Long, Integer> result : circleResults) {
                 if (Objects.equals(result.getF0(), vertexId)) {
                     minCircleLength = Math.min(minCircleLength, result.getF1());
                 }
             }
+            
+            // 输出结果：(顶点ID, 最小环长度)
             if (minCircleLength != Integer.MAX_VALUE) {
                 context.take(ObjectRow.create(vertexId, minCircleLength));
             }
         }
     }
 
+    // 定义输出数据结构
     @Override
     public StructType getOutputType(GraphSchema graphSchema) {
         return new StructType(
-            new TableField("vertex_id", graphSchema.getIdType(), false),
-            new TableField("circle_length", LongType.INSTANCE, false)
+            new TableField("vertex_id", graphSchema.getIdType(), false),  // 顶点ID字段
+            new TableField("circle_length", LongType.INSTANCE, false)    // 环长度字段
         );
     }
-
 }

@@ -29,7 +29,7 @@ import java.util.List;
 
 public interface AlgorithmRuntimeContext<K, M> {
 
-    List<RowEdge> loadEdges(EdgeDirection direction);
+    List<RowEdge> loadEdges(EdgeDirection out);
 
     List<RowEdge> loadStaticEdges(EdgeDirection direction);
 
